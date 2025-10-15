@@ -16,9 +16,15 @@ const MentorDashboard: React.FC<MentorDashboardProps> = ({ currentUser, activiti
     const selectedActivity = activities.find(e => e.id === selectedActivityId);
     const judgedActivities = activities.filter(a => a.type === 'judged');
 
-    const scoresForHistory = myScores.reduce<Record<string, PointsEntry[]>>((acc, score) => {
+    // FIX: The type of `scoresForHistory` was not being correctly inferred from the `reduce` method.
+    // By explicitly typing the `scoresForHistory` constant, we ensure that the accumulator in the
+    // reduce function is correctly typed, which resolves the error where `scores.map` was called on
+    // a variable of type `unknown`.
+    const scoresForHistory: Record<string, PointsEntry[]> = myScores.reduce((acc, score) => {
         const activityName = activities.find(e => e.id === score.activityId)?.name || 'Unknown Activity';
-        if (!acc[activityName]) acc[activityName] = [];
+        if (!acc[activityName]) {
+            acc[activityName] = [];
+        }
         acc[activityName].push(score);
         return acc;
     }, {});
