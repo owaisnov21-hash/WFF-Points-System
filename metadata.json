@@ -1,0 +1,5 @@
+{
+  "name": "World Fusion Fest Points Manager",
+  "description": "A web application for mentors to award points to teams participating in the World Fusion Fest. It features a scoring form and a real-time results leaderboard. This is a frontend-only prototype; data is stored in memory and will be lost on page reload.",
+  "requestFramePermissions": []
+}
