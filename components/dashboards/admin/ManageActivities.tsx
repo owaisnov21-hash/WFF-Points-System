@@ -131,7 +131,7 @@ const ManageActivities: React.FC<ManageActivitiesProps> = ({ activities, setActi
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Activity Type</label>
                         <select value={formState.type} onChange={e => handleFormChange('type', e.target.value)} className="mt-1 p-2 border rounded w-full md:w-1/2 bg-white">
-                            <option value="judged">Judged by Mentors</option>
+                            <option value="judged">Judged</option>
                             <option value="direct">Direct Award</option>
                         </select>
                     </div>

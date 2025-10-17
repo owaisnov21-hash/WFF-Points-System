@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { Activity, DirectorScore, User, PointsEntry } from '../../types';
-import { COUNTRIES } from '../../constants';
-import PublicView from '../PublicView';
+import React, { useState } from 'react';
+import { Activity, Country, DirectorScore, User, PointsEntry, NegativeMarking, BonusPoint, VotingSession, PublicVote, VotingSettings } from '../../types';
+import LiveScoresView from '../LiveScoresView';
+import VotingResultsGraph from '../VotingResultsGraph';
 
 interface DirectorDashboardProps {
     activities: Activity[];
@@ -9,177 +9,318 @@ interface DirectorDashboardProps {
     setDirectorScores: React.Dispatch<React.SetStateAction<DirectorScore[]>>;
     currentUser: User;
     mentorScores: PointsEntry[];
+    countriesData: Country[];
+    negativeMarkings: NegativeMarking[];
+    setNegativeMarkings: React.Dispatch<React.SetStateAction<NegativeMarking[]>>;
+    bonusPoints: BonusPoint[];
+    setBonusPoints: React.Dispatch<React.SetStateAction<BonusPoint[]>>;
+    votingSessions: VotingSession[];
+    setVotingSessions: React.Dispatch<React.SetStateAction<VotingSession[]>>;
+    publicVotes: PublicVote[];
+    votingSettings: VotingSettings;
 }
 
-const DirectorDashboard: React.FC<DirectorDashboardProps> = ({ activities, directorScores, setDirectorScores, currentUser, mentorScores }) => {
-    const [view, setView] = useState<'award' | 'summary' | 'history'>('award');
+const DirectorDashboard: React.FC<DirectorDashboardProps> = (props) => {
+    const { 
+        activities, directorScores, setDirectorScores, currentUser, mentorScores, countriesData,
+        negativeMarkings, setNegativeMarkings, bonusPoints, setBonusPoints, votingSessions, setVotingSessions, publicVotes, votingSettings
+    } = props;
+
+    const [view, setView] = useState<'awards' | 'penalties' | 'bonus' | 'voting' | 'live-scores' | 'live-voting'>('awards');
     
-    const [scoreData, setScoreData] = useState({
-      team: '',
-      activityId: '',
-      points: 0,
-      criteriaPoints: {} as Record<string, number>
-    });
+    // --- State for Forms ---
+    const [awardData, setAwardData] = useState({ activityId: '', team_country: '', points: 0 });
+    const [penaltyData, setPenaltyData] = useState({ team: '', points: 0, reason: '' });
+    const [bonusData, setBonusData] = useState({ team: '', points: 0, reason: '' });
     
-    const directAwardActivities = activities.filter(a => a.type === 'direct');
-    const judgedActivities = activities.filter(a => a.type === 'judged');
-    const selectedActivity = activities.find(a => a.id === scoreData.activityId);
+    // State for Voting Management
+    const [editingVotingSession, setEditingVotingSession] = useState<VotingSession | Partial<VotingSession> | null>(null);
+    
+    // State for editing pending submissions
+    const [editingPenalty, setEditingPenalty] = useState<NegativeMarking | null>(null);
+    const [editingBonus, setEditingBonus] = useState<BonusPoint | null>(null);
 
-    const myAwards = useMemo(() => {
-        return directorScores
-            .filter(s => s.awardedBy === currentUser.username)
-            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-    }, [directorScores, currentUser.username]);
+    // --- Handlers ---
+    const handleAwardSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const activity = activities.find(a => a.id === awardData.activityId);
+        if (!activity || !awardData.team_country || awardData.points <= 0) return alert("Please select an activity, a team, and enter a positive point value.");
+        
+        const maxPoints = activity.type === 'judged' 
+            ? activity.criteria?.reduce((sum, c) => sum + c.maxPoints, 0) ?? 0
+            : activity.maxPoints ?? 0;
 
-    const handleAwardScore = () => {
-        if (!scoreData.team || !selectedActivity) {
-            alert('Please select a team and a valid activity.');
-            return;
+        if (awardData.points > maxPoints) return alert(`Points cannot exceed the maximum of ${maxPoints} for this activity.`);
+
+        const newScore: DirectorScore = { id: Date.now(), activityId: awardData.activityId, team_country: awardData.team_country, points: awardData.points, awardedBy: currentUser.username, timestamp: new Date().toISOString() };
+        setDirectorScores(prev => [...prev.filter(s => !(s.activityId === newScore.activityId && s.team_country === newScore.team_country)), newScore]);
+        alert(`Awarded ${newScore.points} points to ${newScore.team_country} for ${activity.name}.`);
+        setAwardData({ activityId: '', team_country: '', points: 0 });
+    };
+
+    const handleSavePenalty = (isEditing: boolean) => {
+        const data = isEditing ? editingPenalty : penaltyData;
+        const team = isEditing ? data?.team_country : penaltyData.team;
+
+        if (!team || (data?.points ?? 0) <= 0 || !data?.reason.trim()) return alert('Please select a team, enter a positive point value, and provide a reason.');
+        
+        const penalty: NegativeMarking = { 
+            id: isEditing ? data!.id : Date.now(), 
+            team_country: team, 
+            points: data!.points, 
+            reason: data!.reason.trim(), 
+            awardedBy: currentUser.username, 
+            timestamp: new Date().toISOString(), 
+            status: 'pending' 
+        };
+        
+        if (window.confirm(`Are you sure you want to submit this penalty for ${team}? It requires admin approval.`)) {
+            setNegativeMarkings(prev => isEditing ? prev.map(p => p.id === penalty.id ? penalty : p) : [...prev, penalty]);
+            alert('Penalty submitted for approval.');
+            if (isEditing) setEditingPenalty(null);
+            else setPenaltyData({ team: '', points: 0, reason: '' });
         }
-
-        let totalPoints = 0;
-        if (selectedActivity.type === 'direct' && selectedActivity.maxPoints) {
-            totalPoints = Math.max(0, Math.min(scoreData.points, selectedActivity.maxPoints));
-        } else if (selectedActivity.type === 'judged' && selectedActivity.criteria) {
-            totalPoints = selectedActivity.criteria.reduce((sum, crit) => {
-                const awarded = scoreData.criteriaPoints[crit.id] || 0;
-                return sum + Math.max(0, Math.min(awarded, crit.maxPoints));
-            }, 0);
-        } else {
-            alert('Selected activity is not configured correctly for scoring.');
-            return;
-        }
-
-        setDirectorScores(prev => [...prev, {
-            id: Date.now(),
-            activityId: selectedActivity.id,
-            team_country: scoreData.team,
-            points: totalPoints,
-            awardedBy: currentUser.username,
-            timestamp: new Date().toISOString()
-        }]);
-
-        alert(`Awarded ${totalPoints} points to ${scoreData.team} for ${selectedActivity.name}.`);
-        setScoreData({ team: '', activityId: '', points: 0, criteriaPoints: {} });
     };
     
-    const handleActivityChange = (activityId: string) => {
-        setScoreData({
-            team: scoreData.team,
-            activityId,
-            points: 0,
-            criteriaPoints: {}
-        });
-    }
+    const handleSaveBonus = (isEditing: boolean) => {
+        const data = isEditing ? editingBonus : bonusData;
+        const team = isEditing ? data?.team_country : bonusData.team;
 
-    const renderAwardForm = () => (
-      <div>
-           <h3 className="text-xl font-semibold mb-3 text-gray-700">Award Points</h3>
-           <div className="p-4 border rounded-lg bg-gray-50 space-y-4">
-              {/* Row 1: Team and Activity Selection */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <select value={scoreData.team} onChange={e => setScoreData(p => ({...p, team: e.target.value}))} className="p-2 border rounded bg-white">
-                      <option value="">-- Select Team --</option>
-                      {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                   <select value={scoreData.activityId} onChange={e => handleActivityChange(e.target.value)} className="p-2 border rounded bg-white">
-                      <option value="">-- Select Activity --</option>
-                      {judgedActivities.length > 0 && <optgroup label="Judged Activities">
-                          {judgedActivities.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                      </optgroup>}
-                      {directAwardActivities.length > 0 && <optgroup label="Direct Awards">
-                          {directAwardActivities.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                      </optgroup>}
-                  </select>
-              </div>
+        if (!team || (data?.points ?? 0) <= 0 || !data?.reason.trim()) return alert('Please select a team, enter a positive point value, and provide a reason.');
+        
+        const bonus: BonusPoint = { 
+            id: isEditing ? data!.id : Date.now(), 
+            team_country: team, 
+            points: data!.points, 
+            reason: data!.reason.trim(), 
+            awardedBy: currentUser.username, 
+            timestamp: new Date().toISOString(), 
+            status: 'pending' 
+        };
+        
+        if (window.confirm(`Are you sure you want to submit this bonus for ${team}? It requires admin approval.`)) {
+            setBonusPoints(prev => isEditing ? prev.map(p => p.id === bonus.id ? bonus : p) : [...prev, bonus]);
+            alert('Bonus submitted for approval.');
+            if(isEditing) setEditingBonus(null);
+            else setBonusData({ team: '', points: 0, reason: '' });
+        }
+    };
 
-              {/* Row 2: Dynamic Points Input */}
-              {selectedActivity?.type === 'direct' && (
-                  <div>
-                      <label className="block text-sm font-medium text-gray-700">Points (Max: {selectedActivity.maxPoints})</label>
-                      <input 
-                          type="number"
-                          placeholder="Points"
-                          value={scoreData.points}
-                          onChange={e => setScoreData(p => ({...p, points: parseInt(e.target.value) || 0}))}
-                          className="p-2 border rounded w-full md:w-1/2 mt-1"
-                          max={selectedActivity.maxPoints}
-                          min={0}
-                      />
-                  </div>
-              )}
-              {selectedActivity?.type === 'judged' && selectedActivity.criteria && (
-                  <div className="space-y-2 pt-2">
-                      {selectedActivity.criteria.map(crit => (
-                          <div key={crit.id} className="grid grid-cols-2 md:grid-cols-3 gap-4 items-center">
-                              <label className="font-medium">{crit.name}</label>
-                              <input
-                                  type="number"
-                                  placeholder={`Points (Max ${crit.maxPoints})`}
-                                  value={scoreData.criteriaPoints[crit.id] || ''}
-                                  onChange={e => {
-                                      const val = parseInt(e.target.value) || 0;
-                                      setScoreData(p => ({ ...p, criteriaPoints: {...p.criteriaPoints, [crit.id]: val }}));
-                                  }}
-                                  className="p-2 border rounded text-center"
-                                  max={crit.maxPoints}
-                                  min={0}
-                              />
-                          </div>
-                      ))}
-                       <div className="text-right font-bold text-lg pt-2 border-t mt-2">
-                          Total: {selectedActivity.criteria.reduce((sum, crit) => sum + (scoreData.criteriaPoints[crit.id] || 0), 0)}
-                      </div>
-                  </div>
-              )}
-           </div>
-           <div className="mt-4 flex justify-end">
-              <button onClick={handleAwardScore} className="bg-green-600 text-white p-2 px-6 rounded hover:bg-green-700 font-semibold" disabled={!scoreData.team || !scoreData.activityId}>Award Points</button>
-           </div>
-      </div>
-    );
-    
-    const renderHistory = () => (
+    const handleDeletePending = (type: 'penalty' | 'bonus', id: number) => {
+        if (!window.confirm("Are you sure you want to delete this pending submission?")) return;
+        if(type === 'penalty') setNegativeMarkings(prev => prev.filter(p => p.id !== id));
+        else setBonusPoints(prev => prev.filter(p => p.id !== id));
+    };
+
+    const handleSaveVoting = () => {
+        if (!editingVotingSession?.name || !editingVotingSession?.team_country || (editingVotingSession.points ?? 0) <= 0) return alert("All fields are required for voting session.");
+        
+        const sessionToSave = { ...editingVotingSession, points: Number(editingVotingSession.points), timestamp: new Date().toISOString(), awardedBy: currentUser.username };
+
+        setVotingSessions(prev => 'id' in sessionToSave 
+            ? prev.map(s => s.id === sessionToSave.id ? sessionToSave as VotingSession : s) 
+            : [...prev, {...sessionToSave, id: Date.now()} as VotingSession]
+        );
+        setEditingVotingSession(null);
+    };
+
+    const handleDeleteVoting = (id: number) => {
+        if (window.confirm("Delete this voting record?")) {
+            setVotingSessions(prev => prev.filter(v => v.id !== id));
+        }
+    };
+
+
+    // --- Render Methods ---
+    const renderContent = () => {
+        switch (view) {
+            case 'awards': return <AwardPointsView />;
+            case 'penalties': return <ManageSubmissionsView type="penalty" />;
+            case 'bonus': return <ManageSubmissionsView type="bonus" />;
+            case 'voting': return <ManageVotingView />;
+            case 'live-scores': return <LiveScoresView {...props} />;
+            case 'live-voting': return <LiveVotingView />;
+            default: return null;
+        }
+    };
+
+    const LiveVotingView = () => (
         <div>
-            <h3 className="text-xl font-semibold mb-3 text-gray-700">My Award History</h3>
-            {myAwards.length === 0 ? (
-                <p className="text-gray-500 italic">You have not awarded any points yet.</p>
+            <h3 className="text-xl font-semibold mb-3 text-gray-700">Live Public Voting Status</h3>
+            {votingSettings.isOpen && votingSettings.deadline ? (
+                <div className="p-4 border rounded-lg bg-green-50 space-y-4">
+                    <div className="flex justify-between items-center">
+                        <div>
+                            <p className="font-semibold text-lg text-green-800">{votingSettings.name}</p>
+                            <p className="text-sm text-gray-600">Voting is currently OPEN.</p>
+                        </div>
+                        <div className="text-right">
+                            <p className="text-sm text-gray-600">Closes on:</p>
+                            <p className="font-semibold text-green-800">{new Date(votingSettings.deadline).toLocaleString()}</p>
+                        </div>
+                    </div>
+                    <div className="text-center">
+                        <p className="text-sm text-gray-600">Total Votes Cast in this Session</p>
+                        <p className="text-4xl font-bold text-blue-600">{publicVotes.filter(v => v.sessionId === votingSettings.id).length}</p>
+                    </div>
+                    <div>
+                         <h4 className="font-semibold text-gray-700 text-center mb-2">Current Standings</h4>
+                         <VotingResultsGraph publicVotes={publicVotes.filter(v => v.sessionId === votingSettings.id)} countriesData={countriesData} showCounts={true} />
+                    </div>
+                </div>
             ) : (
-                <div className="overflow-x-auto border rounded-lg">
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Team</th>
-                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Activity</th>
-                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Points</th>
-                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Timestamp</th>
-                            </tr>
-                        </thead>
-                         <tbody className="bg-white divide-y divide-gray-200">
-                            {myAwards.map(score => (
-                                <tr key={score.id}>
-                                    <td className="px-4 py-2 font-medium">{score.team_country}</td>
-                                    <td className="px-4 py-2 text-gray-600">{activities.find(a => a.id === score.activityId)?.name}</td>
-                                    <td className="px-4 py-2 font-bold">{score.points}</td>
-                                    <td className="px-4 py-2 text-sm text-gray-500">{new Date(score.timestamp).toLocaleString()}</td>
-                                </tr>
-                            ))}
-                         </tbody>
-                    </table>
+                <div className="p-8 text-center border rounded-lg bg-gray-50">
+                    <p className="font-semibold text-gray-700">Voting is currently CLOSED.</p>
+                    <p className="text-gray-500 mt-2">Check back later for the next live voting session!</p>
+                    {publicVotes.length > 0 && (
+                        <div className="mt-6">
+                            <h4 className="font-semibold text-gray-700 mb-2">Results from the last session:</h4>
+                            <VotingResultsGraph publicVotes={publicVotes} countriesData={countriesData} showCounts={true} />
+                        </div>
+                    )}
                 </div>
             )}
         </div>
     );
 
-    const renderContent = () => {
-        switch (view) {
-            case 'award': return renderAwardForm();
-            case 'history': return renderHistory();
-            case 'summary': return <PublicView mentorScores={mentorScores} directorScores={directorScores} activities={activities} />;
-            default: return null;
-        }
+    const AwardPointsView = () => {
+        const selectedActivity = activities.find(a => a.id === awardData.activityId);
+        const maxPointsForSelected = selectedActivity ? 
+            (selectedActivity.type === 'judged' 
+                ? selectedActivity.criteria?.reduce((sum, c) => sum + c.maxPoints, 0) ?? 0 
+                : selectedActivity.maxPoints ?? 0)
+            : 0;
+
+        return (
+            <div>
+                <h3 className="text-xl font-semibold mb-3 text-gray-700">Award Points for Activities</h3>
+                <form onSubmit={handleAwardSubmit} className="p-4 border rounded-lg bg-gray-50 space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <select value={awardData.activityId} onChange={e => setAwardData(p => ({...p, activityId: e.target.value, points: 0}))} className="p-2 border rounded bg-white">
+                            <option value="">-- Select Award --</option>
+                            {activities.map(a => {
+                                const maxPts = a.type === 'judged' ? a.criteria?.reduce((s, c) => s + c.maxPoints, 0) : a.maxPoints;
+                                return <option key={a.id} value={a.id}>{a.name} (Max: {maxPts} pts)</option>
+                            })}
+                        </select>
+                        <select value={awardData.team_country} onChange={e => setAwardData(p => ({...p, team_country: e.target.value}))} className="p-2 border rounded bg-white">
+                            <option value="">-- Select Team --</option>
+                            {countriesData.map(c => <option key={c.name} value={c.name}>{c.flag} {c.name}</option>)}
+                        </select>
+                        <input type="number" placeholder="Points" value={awardData.points === 0 ? '' : awardData.points} onChange={e => setAwardData(p => ({...p, points: Math.max(0, Math.min(parseInt(e.target.value) || 0, maxPointsForSelected)) }))} className="p-2 border rounded" min="1" max={maxPointsForSelected}/>
+                    </div>
+                    <div className="flex justify-end">
+                        <button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 font-semibold" disabled={!awardData.activityId || !awardData.team_country || awardData.points <= 0}>Submit Award</button>
+                    </div>
+                </form>
+            </div>
+        );
     };
 
+    const ManageSubmissionsView: React.FC<{type: 'penalty' | 'bonus'}> = ({ type }) => {
+        const isPenalty = type === 'penalty';
+        const title = isPenalty ? "Penalty / Negative Marking" : "Bonus Points";
+        const formState = isPenalty ? penaltyData : bonusData;
+        const setFormState = isPenalty ? setPenaltyData : setBonusData;
+        const editingState = isPenalty ? editingPenalty : editingBonus;
+        const setEditingState = isPenalty ? setEditingPenalty as any : setEditingBonus as any;
+        const allItems = (isPenalty ? negativeMarkings : bonusPoints).filter(i => i.awardedBy === currentUser.username);
+        const handleSave = isPenalty ? handleSavePenalty : handleSaveBonus;
+        const bgColor = isPenalty ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200';
+        const btnColor = isPenalty ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700';
+
+        const FormComponent: React.FC<{isEditing: boolean}> = ({ isEditing }) => {
+            const data = isEditing ? editingState : formState;
+            const team = isEditing ? data?.team_country : (data as typeof formState).team;
+            const setData = isEditing ? setEditingState : setFormState;
+
+            return (
+                 <div className={`p-4 border rounded-lg ${bgColor} space-y-4`}>
+                    <h4 className="font-semibold">{isEditing ? `Edit ${title}` : `Add New ${title}`}</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <select value={team} onChange={e => setData((p: any) => ({...p, [isEditing ? 'team_country' : 'team']: e.target.value}))} className="p-2 border rounded bg-white">
+                            <option value="">-- Select Team --</option>
+                            {countriesData.map(c => <option key={c.name} value={c.name}>{c.flag} {c.name}</option>)}
+                        </select>
+                        <input type="number" placeholder="Points" value={data?.points === 0 ? '' : data?.points} onChange={e => setData((p: any) => ({...p, points: parseInt(e.target.value) || 0}))} className="p-2 border rounded" min={1} />
+                    </div>
+                    <textarea value={data?.reason} onChange={e => setData((p: any) => ({...p, reason: e.target.value}))} className="p-2 border rounded w-full" rows={3} placeholder="Reason (Required)" />
+                    <div className="flex justify-end space-x-2">
+                        {isEditing && <button onClick={() => setEditingState(null)} className="bg-gray-300 text-black px-6 py-2 rounded font-semibold">Cancel</button>}
+                        <button onClick={() => handleSave(isEditing)} className={`${btnColor} text-white px-6 py-2 rounded font-semibold`} disabled={!team || (data?.points ?? 0) <= 0 || !data?.reason.trim()}>
+                            {isEditing ? 'Save Changes' : 'Submit for Approval'}
+                        </button>
+                    </div>
+                </div>
+            )
+        };
+        
+        return (
+            <div>
+                <h3 className="text-xl font-semibold mb-3 text-gray-700">{`Manage ${title}`}</h3>
+                {!editingState && <FormComponent isEditing={false} />}
+                {editingState && <FormComponent isEditing={true} />}
+                
+                <div className="mt-6">
+                    <h4 className="font-semibold">My Submissions</h4>
+                    <div className="space-y-2 mt-2">
+                        {allItems.length > 0 ? allItems.map(item => (
+                            <div key={item.id} className={`p-3 border rounded-lg ${item.status === 'pending' ? 'bg-yellow-50' : 'bg-gray-50'}`}>
+                                <p><strong>{item.team_country}</strong>: {isPenalty ? '-' : '+'}{item.points} pts - <i>Status: <span className="capitalize font-semibold">{item.status}</span></i></p>
+                                <p className="text-sm text-gray-600">{item.reason}</p>
+                                {item.status === 'pending' && item.id !== editingState?.id && (
+                                    <div className="text-right space-x-2">
+                                        <button onClick={() => setEditingState(item)} className="text-blue-600 text-sm">Edit</button>
+                                        <button onClick={() => handleDeletePending(type, item.id)} className="text-red-600 text-sm">Delete</button>
+                                    </div>
+                                )}
+                            </div>
+                        )) : <p className="text-gray-500">No submissions yet.</p>}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const ManageVotingView = () => {
+        const FormComponent = () => (
+             <div className="p-4 border rounded-lg bg-purple-50 space-y-4">
+                <h4 className="font-semibold">{editingVotingSession && 'id' in editingVotingSession ? 'Edit Voting Result' : 'Add Voting Result'}</h4>
+                <input type="text" placeholder="Voting Session Name" value={editingVotingSession?.name} onChange={e => setEditingVotingSession(p => ({...p, name: e.target.value}))} className="p-2 border rounded w-full" required />
+                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <input type="date" value={editingVotingSession?.date} onChange={e => setEditingVotingSession(p => ({...p, date: e.target.value}))} className="p-2 border rounded w-full" required/>
+                    <select value={editingVotingSession?.team_country} onChange={e => setEditingVotingSession(p => ({...p, team_country: e.target.value}))} className="p-2 border rounded bg-white" required>
+                        <option value="">-- Select Team --</option>
+                        {countriesData.map(c => <option key={c.name} value={c.name}>{c.flag} {c.name}</option>)}
+                    </select>
+                    <input type="number" placeholder="Points" value={editingVotingSession?.points === 0 ? '' : editingVotingSession?.points} onChange={e => setEditingVotingSession(p => ({...p, points: parseInt(e.target.value) || 0}))} className="p-2 border rounded" min="1" required/>
+                </div>
+                <div className="flex justify-end space-x-2">
+                    <button onClick={() => setEditingVotingSession(null)} className="bg-gray-300 text-black px-6 py-2 rounded font-semibold">Cancel</button>
+                    <button onClick={handleSaveVoting} className="bg-purple-600 text-white px-6 py-2 rounded hover:bg-purple-700 font-semibold">Save Voting Result</button>
+                </div>
+            </div>
+        );
+
+        return (
+             <div>
+                <h3 className="text-xl font-semibold mb-3 text-gray-700">Manage Voting Sessions</h3>
+                {editingVotingSession ? <FormComponent /> : <button onClick={() => setEditingVotingSession({ name: '', date: new Date().toISOString().split('T')[0], team_country: '', points: 0 })} className="bg-purple-600 text-white p-2 px-4 rounded hover:bg-purple-700">+ Add New Result</button>}
+                <div className="mt-6 space-y-2">
+                    {votingSessions.map(v => (
+                        <div key={v.id} className="p-3 border rounded-lg flex justify-between items-center">
+                            <div><span className="font-bold">{v.name}</span> ({v.date}): <span className="font-semibold">{v.team_country}</span> got +{v.points} pts.</div>
+                            <div className="space-x-2">
+                                <button onClick={() => setEditingVotingSession(v)} className="text-blue-600 text-sm">Edit</button>
+                                <button onClick={() => handleDeleteVoting(v.id)} className="text-red-600 text-sm">Delete</button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )
+    };
+    
     const linkClasses = "px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200";
     const activeClasses = "bg-blue-600 text-white shadow";
     const inactiveClasses = "bg-gray-200 text-gray-700 hover:bg-gray-300";
@@ -187,11 +328,17 @@ const DirectorDashboard: React.FC<DirectorDashboardProps> = ({ activities, direc
     return (
         <div className="bg-white p-6 md:p-8 rounded-xl shadow-lg">
             <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-6 border-b pb-4">
-                <h2 className="text-2xl md:text-3xl font-bold text-gray-800">Director Dashboard</h2>
-                 <div className="flex flex-wrap space-x-2 bg-gray-100 p-1 rounded-lg">
-                    <button onClick={() => setView('award')} className={`${linkClasses} ${view === 'award' ? activeClasses : inactiveClasses}`}>Award Points</button>
-                    <button onClick={() => setView('history')} className={`${linkClasses} ${view === 'history' ? activeClasses : inactiveClasses}`}>My Awards</button>
-                    <button onClick={() => setView('summary')} className={`${linkClasses} ${view === 'summary' ? activeClasses : inactiveClasses}`}>Overall Summary</button>
+                <div>
+                    <h2 className="text-2xl md:text-3xl font-bold text-gray-800">Director Dashboard</h2>
+                    <p className="text-gray-500">Welcome, {currentUser.username}!</p>
+                </div>
+                <div className="flex flex-wrap gap-2 bg-gray-100 p-1 rounded-lg">
+                    <button onClick={() => setView('awards')} className={`${linkClasses} ${view === 'awards' ? activeClasses : inactiveClasses}`}>Awards</button>
+                    <button onClick={() => setView('bonus')} className={`${linkClasses} ${view === 'bonus' ? 'bg-green-600 text-white shadow' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}>Bonus</button>
+                    <button onClick={() => setView('penalties')} className={`${linkClasses} ${view === 'penalties' ? 'bg-red-600 text-white shadow' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}>Penalties</button>
+                    <button onClick={() => setView('voting')} className={`${linkClasses} ${view === 'voting' ? 'bg-purple-600 text-white shadow' : 'bg-purple-100 text-purple-700 hover:bg-purple-200'}`}>Voting</button>
+                    <button onClick={() => setView('live-scores')} className={`${linkClasses} ${view === 'live-scores' ? activeClasses : inactiveClasses}`}>Live Scores</button>
+                    <button onClick={() => setView('live-voting')} className={`${linkClasses} ${view === 'live-voting' ? 'bg-teal-500 text-white shadow' : 'bg-teal-100 text-teal-700 hover:bg-teal-200'}`}>Live Voting</button>
                 </div>
             </div>
             {renderContent()}

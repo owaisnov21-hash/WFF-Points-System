@@ -1,30 +1,31 @@
 import React, { useState, useCallback } from 'react';
-import { Activity, PointsEntry, PointsState, CriteriaKey } from '../../types';
-import { COUNTRIES } from '../../constants';
+import { Activity, PointsEntry, PointsState, CriteriaKey, Country } from '../../types';
 import StarRating from '../StarRating'; 
 
 interface MentorScoringFormProps {
     activity: Activity;
     mentorName: string;
     onFormSubmit: (newEntries: Omit<PointsEntry, 'id' | 'timestamp'>[]) => void;
+    countriesData: Country[];
 }
 
-const MentorScoringForm: React.FC<MentorScoringFormProps> = ({ activity, mentorName, onFormSubmit }) => {
+const MentorScoringForm: React.FC<MentorScoringFormProps> = ({ activity, mentorName, onFormSubmit, countriesData }) => {
     const [currentTeamIndex, setCurrentTeamIndex] = useState(0);
     const [scores, setScores] = useState<Record<string, Record<string, number>>>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
     
-    const currentCountry = COUNTRIES[currentTeamIndex];
+    const currentCountryData = countriesData[currentTeamIndex];
+    const currentCountryName = currentCountryData.name;
 
     const handlePointChange = useCallback((criterionId: string, value: number) => {
         setScores(prev => ({
             ...prev,
-            [currentCountry]: {
-                ...prev[currentCountry],
+            [currentCountryName]: {
+                ...prev[currentCountryName],
                 [criterionId]: value
             }
         }));
-    }, [currentCountry]);
+    }, [currentCountryName]);
 
     const calculateTotal = (country: string) => {
         const countryScores = scores[country] || {};
@@ -36,8 +37,9 @@ const MentorScoringForm: React.FC<MentorScoringFormProps> = ({ activity, mentorN
 
         if (window.confirm("Are you sure you want to submit all scores for this activity? This will overwrite any previous submissions you made.")) {
             setIsSubmitting(true);
-            const finalScores: Omit<PointsEntry, 'id' | 'timestamp'>[] = COUNTRIES.map(country => {
-                const countryScores = scores[country] || {};
+            const finalScores: Omit<PointsEntry, 'id' | 'timestamp'>[] = countriesData.map(countryData => {
+                const countryName = countryData.name;
+                const countryScores = scores[countryName] || {};
                 
                 const pointsData = activity.criteria!.reduce((acc, crit) => {
                     const key = crit.name.toLowerCase().replace(/ /g, '_') as CriteriaKey;
@@ -48,9 +50,9 @@ const MentorScoringForm: React.FC<MentorScoringFormProps> = ({ activity, mentorN
                 return {
                     activityId: activity.id,
                     mentor_name: mentorName,
-                    team_country: country,
+                    team_country: countryName,
                     ...pointsData,
-                    total_points: calculateTotal(country)
+                    total_points: calculateTotal(countryName)
                 }
             });
             onFormSubmit(finalScores);
@@ -59,7 +61,7 @@ const MentorScoringForm: React.FC<MentorScoringFormProps> = ({ activity, mentorN
         }
     };
     
-    const progress = ((currentTeamIndex + 1) / COUNTRIES.length) * 100;
+    const progress = ((currentTeamIndex + 1) / countriesData.length) * 100;
 
     if (activity.type !== 'judged' || !activity.criteria) {
         return <p className="text-red-500">This activity is not a judged activity and cannot be scored here.</p>;
@@ -74,7 +76,7 @@ const MentorScoringForm: React.FC<MentorScoringFormProps> = ({ activity, mentorN
             <div className="mb-6">
                 <div className="flex justify-between mb-1">
                     <span className="text-base font-medium text-blue-700">Progress</span>
-                    <span className="text-sm font-medium text-blue-700">{currentTeamIndex + 1} of {COUNTRIES.length}</span>
+                    <span className="text-sm font-medium text-blue-700">{currentTeamIndex + 1} of {countriesData.length}</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2.5">
                     <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${progress}%` }}></div>
@@ -83,7 +85,17 @@ const MentorScoringForm: React.FC<MentorScoringFormProps> = ({ activity, mentorN
 
             {/* Scoring Card */}
             <div className="bg-gray-50 p-6 rounded-lg border">
-                <h4 className="text-2xl font-bold mb-4">Team: <span className="text-indigo-600">{currentCountry}</span></h4>
+                <h4 className="text-2xl font-bold mb-4 flex items-center gap-3">
+                    Team: 
+                    <span className="text-indigo-600 inline-flex items-center gap-3">
+                        {currentCountryData.imageUrl ? (
+                            <img src={currentCountryData.imageUrl} alt={currentCountryName} className="w-10 h-10 rounded-full object-cover shadow-md"/>
+                        ) : (
+                            <span className="text-3xl">{currentCountryData.flag}</span>
+                        )}
+                        {currentCountryName}
+                    </span>
+                </h4>
                 <div className="space-y-4">
                     {activity.criteria.map(crit => (
                         <div key={crit.id} className="grid grid-cols-1 md:grid-cols-3 items-center gap-4">
@@ -93,14 +105,14 @@ const MentorScoringForm: React.FC<MentorScoringFormProps> = ({ activity, mentorN
                                     type="number"
                                     min="0"
                                     max={crit.maxPoints}
-                                    value={scores[currentCountry]?.[crit.id] ?? ''}
+                                    value={scores[currentCountryName]?.[crit.id] ?? ''}
                                     onChange={(e) => handlePointChange(crit.id, Math.max(0, Math.min(parseInt(e.target.value) || 0, crit.maxPoints)))}
                                     className="w-20 p-2 text-center border-gray-300 rounded-md shadow-sm"
                                     placeholder="0"
                                 />
                                 <StarRating 
                                     maxStars={crit.maxPoints}
-                                    currentRating={scores[currentCountry]?.[crit.id] ?? 0}
+                                    currentRating={scores[currentCountryName]?.[crit.id] ?? 0}
                                     onRatingChange={(rating) => handlePointChange(crit.id, rating)}
                                 />
                             </div>
@@ -108,7 +120,7 @@ const MentorScoringForm: React.FC<MentorScoringFormProps> = ({ activity, mentorN
                     ))}
                 </div>
                  <div className="text-right mt-6 font-bold text-xl">
-                    Total for {currentCountry}: <span className="text-blue-700 tabular-nums">{calculateTotal(currentCountry)}</span>
+                    Total for {currentCountryName}: <span className="text-blue-700 tabular-nums">{calculateTotal(currentCountryName)}</span>
                 </div>
             </div>
 
@@ -122,14 +134,14 @@ const MentorScoringForm: React.FC<MentorScoringFormProps> = ({ activity, mentorN
                     Previous Team
                 </button>
                 
-                {currentTeamIndex === COUNTRIES.length - 1 ? (
+                {currentTeamIndex === countriesData.length - 1 ? (
                     <button onClick={handleSubmit} disabled={isSubmitting} className="px-8 py-3 bg-green-600 text-white font-bold rounded-md hover:bg-green-700 text-lg">
                         {isSubmitting ? 'Submitting...' : 'Submit All Scores'}
                     </button>
                 ) : (
                     <button
                         onClick={() => setCurrentTeamIndex(i => i + 1)}
-                        disabled={currentTeamIndex === COUNTRIES.length - 1}
+                        disabled={currentTeamIndex === countriesData.length - 1}
                         className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
                     >
                         Next Team
